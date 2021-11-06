@@ -1,6 +1,6 @@
 (defparameter *num-players* 2)
 (defparameter *max-dice* 3)
-(defparameter *board-size* 2)
+(defparameter *board-size* 3)
 (defparameter *board-hexnum* (* *board-size* *board-size*))
 
 ;c
@@ -23,6 +23,12 @@
       (loop repeat (- *board-size* y) do (princ " "))
       (loop for x below *board-size* for hex = (aref board (+ x (* *board-size* y))) ;hex = 見てる六角形マス
         do (format t "~a-~a " (player-letter (first hex)) (second hex))))))
+
+(let ;game-treeのメモ化
+  ((old-game-tree (symbol-function 'game-tree))
+   (previous (make-hash-table :test #'equalp)))
+  (defun game-tree (&rest rest)
+    (or (gethash rest previous) (setf (gethash rest previous) (apply old-game-tree rest)))))
 
 ;c
 (defun game-tree (board player spare-dice first-move) ;与えられた初期状態から可能な全盤面、指し手を表現する木構造を作成
@@ -56,15 +62,21 @@
             (neighbors src))))
       (loop for n below *board-hexnum* collect n)))) ;全マス
 
+(let ;メモ化による最適化
+  ((old-neighbors (symbol-function 'neighbors))
+   (previous (make-hash-table)))
+  (defun neighbors (pos) ;再定義
+    (or (gethash pos previous) (setf (gethash pos previous) (funcall old-neighbors pos)))))
+
 (defun neighbors (pos) ;posに隣接するマス
   (let
     ((up (- pos *board-size*)) ;posの上
-     (down (+ pos *board-size*))) ;posの下
+    (down (+ pos *board-size*))) ;posの下
     (loop for p in (append (list up down) ;上下
-                           (unless (zerop (mod pos *board-size*)) ;左が壁じゃない?
-                             (list (1- up) (1- pos))) ;左と左上
-                           (unless (zerop (mod (1+ pos) *board-size*)) ;右が壁じゃない?
-                             (list (1+ pos) (1+ down)))) ;右と右下
+                          (unless (zerop (mod pos *board-size*)) ;左が壁じゃない?
+                            (list (1- up) (1- pos))) ;左と左上
+                          (unless (zerop (mod (1+ pos) *board-size*)) ;右が壁じゃない?
+                            (list (1+ pos) (1+ down)))) ;右と右下
       when (and (>= p 0) (< p *board-hexnum*))
       collect p)))
 
@@ -132,6 +144,17 @@
     (if (> (length w) 1)
       (format t "The game is a tie betweeen ~a" (mapcar #'player-letter w))
       (format t "The winner is ~a" (player-letter (car w))))))
+
+(let
+  ((old-rate-position (symbol-function 'rate-position))
+   (previous (make-hash-table)))
+  (defun rate-position (tree player)
+    (let
+      ((tab (gethash player previous)))
+      (unless tab
+        (setf tab (setf (gethash player previous) (make-hash-table))))
+      (or (gethash tree tab) (setf (gethash tree tab) (funcall old-rate-position tree player))))))
+;treeはgame-treeのメモ化のおかげでeqlで比較できる
 
 (defun rate-position (tree player) ;盤面の評価値
   (let
