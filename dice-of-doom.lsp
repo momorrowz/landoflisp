@@ -24,12 +24,6 @@
       (loop for x below *board-size* for hex = (aref board (+ x (* *board-size* y))) ;hex = 見てる六角形マス
         do (format t "~a-~a " (player-letter (first hex)) (second hex))))))
 
-(let ;game-treeのメモ化
-  ((old-game-tree (symbol-function 'game-tree))
-   (previous (make-hash-table :test #'equalp)))
-  (defun game-tree (&rest rest)
-    (or (gethash rest previous) (setf (gethash rest previous) (apply old-game-tree rest)))))
-
 ;c
 (defun game-tree (board player spare-dice first-move) ;与えられた初期状態から可能な全盤面、指し手を表現する木構造を作成
   ;返り値は(player,board,可能な手とその後のtreeのリスト)
@@ -39,6 +33,12 @@
                                        spare-dice 
                                        first-move 
                                        (attacking-moves board player spare-dice))))
+
+(let ;game-treeのメモ化
+  ((old-game-tree (symbol-function 'game-tree))
+   (previous (make-hash-table :test #'equalp)))
+  (defun game-tree (&rest rest)
+    (or (gethash rest previous) (setf (gethash rest previous) (apply old-game-tree rest)))))
 
 (defun add-passing-move (board player spare-dice first-move moves) ;player交代,movesは現在までに集められた可能な指し手
   (if first-move
@@ -62,11 +62,6 @@
             (neighbors src))))
       (loop for n below *board-hexnum* collect n)))) ;全マス
 
-(let ;メモ化による最適化
-  ((old-neighbors (symbol-function 'neighbors))
-   (previous (make-hash-table)))
-  (defun neighbors (pos) ;再定義
-    (or (gethash pos previous) (setf (gethash pos previous) (funcall old-neighbors pos)))))
 
 (defun neighbors (pos) ;posに隣接するマス
   (let
@@ -80,6 +75,12 @@
       when (and (>= p 0) (< p *board-hexnum*))
       collect p)))
 
+(let ;メモ化による最適化
+  ((old-neighbors (symbol-function 'neighbors))
+   (previous (make-hash-table)))
+  (defun neighbors (pos) ;再定義
+    (or (gethash pos previous) (setf (gethash pos previous) (funcall old-neighbors pos)))))
+
 (defun board-attack (board player src dst dice) ;return board after attack from src to dst
   (board-array (loop for pos from 0 ;pos: hexの位置
                      for hex across board
@@ -87,20 +88,35 @@
                                    ((eq pos dst) (list player (1- dice)))
                                    (t hex))))) ;それ以外そのまま
 
+;(defun add-new-dice (board player spare-dice)
+;  (labels
+;    ((f (lst n) ;lstにn個のdiceを補給した盤面情報を表すlstを返す
+;       (cond 
+;         ((null lst) nil)
+;         ((zerop n) lst)
+;         (t
+;            (let
+;              ((cur-player (caar lst))
+;               (cur-dice (cadar lst))) ;先頭マス
+;              (if (and (eq cur-player player) (< cur-dice *max-dice*))
+;                (cons (list cur-player (1+ cur-dice)) (f (cdr lst) (1- n))) ;補給できるマスには追加して再帰
+;                (cons (car lst) (f (cdr lst) n)))))))) ;補給できないの場合
+;      (board-array (f (coerce board 'list) spare-dice))))
+
 (defun add-new-dice (board player spare-dice)
   (labels
-    ((f (lst n) ;lstにn個のdiceを補給した盤面情報を表すlstを返す
-       (cond 
-         ((null lst) nil)
-         ((zerop n) lst)
-         (t
-            (let
-              ((cur-player (caar lst))
-               (cur-dice (cadar lst))) ;先頭マス
-              (if (and (eq cur-player player) (< cur-dice *max-dice*))
-                (cons (list cur-player (1+ cur-dice)) (f (cdr lst) (1- n))) ;補給できるマスには追加して再帰
-                (cons (car lst) (f (cdr lst) n)))))))) ;補給できないの場合
-      (board-array (f (coerce board 'list) spare-dice))))
+    ((f (lst n acc) ;accに更新済みのマスのリストが渡される
+      (cond
+        ((zerop n) (append (reverse acc) lst))
+        ((null lst) (reverse acc)) ;accは末端でreverse
+        (t 
+          (let
+            ((cur-player (caar lst))
+             (cur-dice (cadar lst)))
+            (if (and (eq cur-player player) (< cur-dice *max-dice*))
+              (f (cdr lst) (1- n) (cons (list cur-player (1+ cur-dice)) acc));補給できるので+1して,accにcons
+              (f (cdr lst) n (cons (car lst) acc))))))));補給できないのでそのままcons
+    (board-array (f (coerce board 'list) spare-dice ()))))
 
 (defun play-vs-human (tree) ;メインループ
   (print-info tree)
@@ -145,17 +161,6 @@
       (format t "The game is a tie betweeen ~a" (mapcar #'player-letter w))
       (format t "The winner is ~a" (player-letter (car w))))))
 
-(let
-  ((old-rate-position (symbol-function 'rate-position))
-   (previous (make-hash-table)))
-  (defun rate-position (tree player)
-    (let
-      ((tab (gethash player previous)))
-      (unless tab
-        (setf tab (setf (gethash player previous) (make-hash-table))))
-      (or (gethash tree tab) (setf (gethash tree tab) (funcall old-rate-position tree player))))))
-;treeはgame-treeのメモ化のおかげでeqlで比較できる
-
 (defun rate-position (tree player) ;盤面の評価値
   (let
     ((moves (caddr tree))) ;可能な指し手があるか
@@ -168,6 +173,17 @@
         (if (member player w) ;playerが勝者になってるか
           (/ 1 (length w));1/勝者数を点数に
           0)))))
+
+(let
+  ((old-rate-position (symbol-function 'rate-position))
+   (previous (make-hash-table)))
+  (defun rate-position (tree player)
+    (let
+      ((tab (gethash player previous)))
+      (unless tab
+        (setf tab (setf (gethash player previous) (make-hash-table))))
+      (or (gethash tree tab) (setf (gethash tree tab) (funcall old-rate-position tree player))))))
+;treeはgame-treeのメモ化のおかげでeqlで比較できる
 
 (defun get-ratings (tree player) ;ゲーム木のすべての枝にrate-positionをmap
   (mapcar 
