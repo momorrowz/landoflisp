@@ -2,3 +2,4 @@
 *.dot
 paren.lsp
 test.lsp
+*.svg
