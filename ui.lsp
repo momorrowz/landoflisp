@@ -14,6 +14,7 @@
       (cons (car cmd) (mapcar #'quote-it (cdr cmd))))))
 
 (defparameter *allowed-commands* '(look walk pickup inventory))
+;(defparameter *allowed-commands* '(look walk pickup inventory weld dunk))
 
 (defun game-eval (sexp)
   (if (member (car sexp) *allowed-commands*)
